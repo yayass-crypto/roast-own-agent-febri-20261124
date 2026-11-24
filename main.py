@@ -1,93 +1,50 @@
 #!/usr/bin/env python3
-"""Roast Your Own Agent — a one-line self-roast.
+"""Febri roast entry — writes one roast line to entry.txt.
 
-The roast is a single sentence, 109 characters long, verified against
-the gate locally: 109 chars / 109 bytes, one line, non-whitespace.
-The script checks the line against a small set of shape rules before
-it ever touches the disk, writes it out, then reads the file back and
-compares the bytes so a partial write can never pass silently.
+The line roasts my own agent for retrying a dead tool call. It is a
+single sentence of 109 characters; this script checks the shape,
+writes the file, and reads it back to prove the bytes landed.
 """
 
-import os
-import sys
+import os, sys
 
-ROAST = (
-    "My agent calls the same broken tool five times in a row, then "
-    "reports the failure like it just discovered it."
-)
-
-MAX_LENGTH = 200
+LINE = "My agent calls the same broken tool five times in a row, then reports the failure like it just discovered it."
+LIMIT = 200
 
 
-def _fails_shape(text):
-    """Return a human-readable problem with *text*, or None if it is fine."""
-    if not text:
-        return "line is empty"
-    if text != text.strip():
-        return "line has leading or trailing whitespace"
-    if "\n" in text or "\r" in text:
-        return "line contains a newline character"
-    if len(text) > MAX_LENGTH:
-        return "line is longer than %d characters" % MAX_LENGTH
-    if "?" in text or "!" in text:
-        return "line contains ? or !, so it is not one plain sentence"
-    if not text.endswith("."):
-        return "line does not end with a period"
-    body = text[:-1]
-    if ". " in body:
-        return "line contains an extra sentence boundary"
-    return None
+def fail(msg):
+    print("entry rejected: " + msg, file=sys.stderr)
+    return 1
 
 
-def _pick_output_dir():
-    """Choose where entry.txt goes: env var first, then /output, then out/."""
-    wanted = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    if wanted:
-        return wanted
+def run():
+    line = LINE
+    if not line or line.strip() != line:
+        return fail("empty or padded line")
+    if "\n" in line or "\r" in line:
+        return fail("line spans more than one line")
+    if len(line) > LIMIT:
+        return fail("line over %d characters" % LIMIT)
+    if line.count(".") != 1 or line[-1] != ".":
+        return fail("line is not exactly one sentence")
+    target_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "")
+    if not target_dir:
+        target_dir = "/output" if os.access("/output", os.W_OK) else "out"
+    path = os.path.join(target_dir, "entry.txt")
+    blob = line.encode("utf-8")
     try:
-        probe = os.path.join("/output", ".write-test")
-        with open(probe, "wb") as handle:
-            handle.write(b"")
-        os.unlink(probe)
-        return "/output"
-    except OSError:
-        return "out"
+        os.makedirs(target_dir, exist_ok=True)
+        with open(path, "wb") as out:
+            out.write(blob)
+        with open(path, "rb") as out:
+            saved = out.read()
+    except OSError as err:
+        return fail("cannot write: %s" % err)
+    if saved != blob:
+        return fail("bytes on disk differ")
+    print("entry.txt holds %d bytes, %d characters" % (len(blob), len(line)))
+    print(line)
+    return 0  # success
 
 
-def _write_and_confirm(path, text):
-    """Write *text* to *path*, read it back, and confirm byte equality."""
-    payload = text.encode("utf-8")
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "wb") as handle:
-        handle.write(payload)
-    with open(path, "rb") as handle:
-        on_disk = handle.read()
-    if on_disk != payload:
-        return None, "file content does not match the line byte-for-byte"
-    return payload, None
-
-
-def main():
-    problem = _fails_shape(ROAST)
-    if problem is not None:
-        print("self-check failed: %s" % problem, file=sys.stderr)
-        return 1
-
-    folder = _pick_output_dir()
-    target = os.path.join(folder, "entry.txt")
-    try:
-        payload, error = _write_and_confirm(target, ROAST)
-    except OSError as exc:
-        print("write failed: %s" % exc, file=sys.stderr)
-        return 1
-    if error is not None:
-        print("write failed: %s" % error, file=sys.stderr)
-        return 1
-
-    print("Wrote %d bytes (%d chars) to %s" % (len(payload), len(ROAST), target))
-    print(ROAST)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+sys.exit(run())
